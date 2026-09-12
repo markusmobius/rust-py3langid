@@ -1,6 +1,6 @@
 [package]
 name = "rust-py3langid"
-version = "0.1.0"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.98.1"
 description = "Faithful Rust port of the go-py3langid inference runtime"

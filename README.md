@@ -1,22 +1,25 @@
 # rust-py3langid
 
-An in-progress Rust port of
-[go-py3langid v0.4.0](https://github.com/markusmobius/go-py3langid/tree/v0.4.0),
-preserving its py3langid 0.4.0 model and inference behavior. This is the first
-component of a faithful Go-Trafilatura v2.2.0 port, not a new language model.
+A pure-Rust port of the [py3langid](https://github.com/adbar/py3langid) inference
+runtime, with its current model embedded in the library. No runtime Go, Python,
+NumPy, native C library, or model download is needed.
 
-The library runs entirely in Rust with an embedded model. No runtime Go, Python,
-network access, model download, native C library, or training step is needed.
-It exposes 140 unique labels: 139 languages and `zxx` (non-linguistic content).
+The initial Rust release, **v0.4.0**, tracks
+[go-py3langid v0.4.0](https://github.com/markusmobius/go-py3langid/tree/v0.4.0)
+and Python py3langid 0.4.0. The model recognizes 139 languages plus `zxx`
+(non-linguistic content). Its 142 internal score columns produce 140 unique
+labels; Serbian and Uzbek each have two script-specific columns that are merged
+during inference.
 `und` is returned only by explicitly configured confidence-based abstention.
 
 ## Use
 
-Until a release is explicitly approved, use the local checkout as a dependency:
+This is a GitHub source release, not a crates.io publication.
+Requires Rust 1.98.1. Pin the release tag as a Cargo dependency:
 
 ```toml
 [dependencies]
-rust-py3langid = { path = "../rust-py3langid" }
+rust-py3langid = { git = "https://github.com/markusmobius/rust-py3langid", tag = "v0.4.0" }
 ```
 
 ```rust
@@ -50,8 +53,8 @@ UTF-8 strings and byte slices through `AsRef<[u8]>`; invalid bytes follow Go's
 preprocessing behavior, rather than replacement-character decoding.
 
 `classify` and `rank` use `default_identifier()`, whose configuration is shared.
-Use a separate `Identifier::new()` for a Trafilatura instance or independent
-language restrictions. Explicit normalized methods do not change the default
+Use a separate `Identifier::new()` when independent language restrictions are
+needed. Explicit normalized methods do not change the default
 score mode. `min_confidence` requires `normalized: true`, affects identification
 only, and never replaces labels in a ranking.
 
@@ -81,7 +84,8 @@ probabilities without abstention, and count every exact-label prediction.
 
 All tables below were rerun after the retained
 [within-thread optimizations](#within-thread-optimizations). They supersede the
-earlier pre-optimization and experimental timing tables.
+earlier pre-optimization and experimental timing tables. The measured inference
+code is from `28d9ecb`, unchanged by the v0.4.0 release metadata update.
 
 ### Results: 2026-09-12
 
@@ -156,7 +160,7 @@ tables. Both use the same retained inference code and portable release profile.
 
 | Engine | Samples | Model startup (ms) | Pass time (ms) | Accuracy |
 | --- | ---: | ---: | ---: | ---: |
-| rust-py3langid 0.1.0 | 1,000 | 276.79 | 15.15 | 99.20% (992/1,000) |
+| rust-py3langid | 1,000 | 276.79 | 15.15 | 99.20% (992/1,000) |
 | Whatlang 0.18.0 | 1,000 | <0.01[^startup] | 36.45 | 99.30% (993/1,000) |
 | Lingua 1.8.0, high accuracy | 1,000 | 69.21 | 1,349.42 | 98.70% (987/1,000) |
 | Whichlang 0.1.1[^whichlang-subset] | 800 | 0[^startup] | 1.05 | 99.875% (799/800) |
@@ -330,7 +334,7 @@ BENCHMARK_SUITE="$SUITE" cargo test --locked --release --example benchmark \
 | `Classes`, restrictions/reset | `classes`, `set_languages`, `reset_languages` |
 | Package-level helpers | `classify`, `rank`, `default_identifier()` and its methods |
 | Concurrent inference/configuration | Immutable per-call snapshots; bounded idle buffer pools |
-| Training, HTTP/URL service, complete CLI | Deferred; not needed for Trafilatura's classification call |
+| Training, HTTP/URL service, complete CLI | Not included; this package provides inference and diagnostic examples |
 
 The decoder preserves all 142 internal model columns, including Serbian and
 Uzbek aliases. Raw alias scores use the maximum; calibrated probabilities are
@@ -363,7 +367,7 @@ messages and Rust error types are not promised to be Go-string-identical.
 ## Verification
 
 The working toolchain is pinned to Rust 1.98.1. Earlier compilers are not yet
-qualified. Commit the Cargo lockfile when this work is ready to commit.
+qualified. The committed Cargo lockfile pins the tested dependency versions.
 
 ```sh
 cargo fmt --all -- --check
@@ -409,8 +413,8 @@ every score. Its tolerances are raw `1e-6 + 1e-6 * abs(expected)` and normalized
 Observed on 2026-09-12: Linux debug/release and native Windows/GNU release builds
 matched all 68 Go cases exactly, with zero raw or normalized score differences.
 The 42 Python cases, library tests, doctest, Clippy, formatting, and release builds
-also passed locally. This is corpus-scoped evidence, not a claim of universal
-equivalence or completed production validation.
+also passed locally. These comparisons cover the recorded fixtures; they do not
+establish equivalence or accuracy on all possible inputs.
 
 ### Windows Without MSVC
 
@@ -426,8 +430,9 @@ cargo +1.98.1-x86_64-pc-windows-gnu test --locked --target-dir target/windows-gn
 
 The path shown is the toolchain used for local validation, not a required install
 location. Keeping its target directory separate avoids mixing Windows host build
-artifacts with WSL's. The configured CI runs Linux and Windows/MSVC; macOS,
-ARM64, older Rust versions, and remote CI execution are still to be qualified.
+artifacts with WSL's. Hosted CI passed on Linux and Windows/MSVC for the
+[measured inference commit](https://github.com/markusmobius/rust-py3langid/actions/runs/34716975355).
+macOS, ARM64, and older Rust versions have not yet been qualified.
 
 ## Provenance
 
@@ -452,5 +457,6 @@ The converted `.lidg` format is intentionally reused without retraining.
 BSD-3-Clause terms and the original Marco Lui, Adrien Barbaresi and Ilya Pyshkin
 notices are preserved in [LICENSE](LICENSE). Binary distributions must retain
 these and the notices required by Cargo dependencies, including Unicode data.
-No release or publication has been made. Peak/retained-memory measurements and
-distribution-notice review remain before the M1 handoff is complete.
+The [v0.4.0 release](https://github.com/markusmobius/rust-py3langid/releases/tag/v0.4.0)
+contains source only; prebuilt binaries and crates.io publication are not included.
+Peak and retained memory have not yet been benchmarked.
