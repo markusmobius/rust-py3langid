@@ -1,0 +1,19 @@
+[package]
+name = "rust-py3langid"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.98.1"
+description = "Faithful Rust port of the go-py3langid inference runtime"
+repository = "https://github.com/markusmobius/rust-py3langid"
+license = "BSD-3-Clause"
+
+[dependencies]
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
+icu_casemap = "=2.1.1"
+icu_properties = "=2.1.2"
+unicode-normalization = "=0.1.25"
+
+[dev-dependencies]
+base64 = "0.22"
+serde_json = { version = "1", features = ["float_roundtrip"] }
+sha2 = "0.10"

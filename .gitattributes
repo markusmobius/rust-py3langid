@@ -1,0 +1,5 @@
+* text=auto eol=lf
+*.lidg binary
+/LICENSE -text whitespace=cr-at-eol
+/testdata/py3langid_cases.json -text whitespace=cr-at-eol
+/testdata/py3langid_reference.json -text whitespace=cr-at-eol

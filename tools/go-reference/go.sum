@@ -1,0 +1,4 @@
+github.com/markusmobius/go-py3langid v0.4.0 h1:utKZ6EaXZmuMnAFZXDDmsK6iAlzSKPyCdCaJQOzBU2g=
+github.com/markusmobius/go-py3langid v0.4.0/go.mod h1:XiCY1vO+Waymj+bQgeqkil6fFcB9yDgQifFMVK7tpLE=
+golang.org/x/text v0.42.0 h1:JbOZXgfeCPU9gacVtYliJqOhD+zhrEqK4LfdpmlUZqI=
+golang.org/x/text v0.42.0/go.mod h1:ojzP1Z+2QtioaF8DTtO8K5q7JWVVYwZKenzujK0Zd0E=
