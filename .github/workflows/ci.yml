@@ -25,6 +25,10 @@ jobs:
       - run: cargo test --locked --example benchmark
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo build --locked --release --examples
+      - if: runner.os == 'Linux'
+        run: cargo test --locked --example benchmark --features benchmark-comparison
+      - if: runner.os == 'Linux'
+        run: cargo clippy --locked --example benchmark --features benchmark-comparison -- -D warnings
       - uses: actions/setup-go@v6
         if: runner.os == 'Linux'
         with:

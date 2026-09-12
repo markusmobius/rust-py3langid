@@ -408,3 +408,59 @@ fn live_go_parity() {
     }
     eprintln!("Go parity: {} cases; maximum absolute score differences: raw={maximum_raw_difference}, normalized={maximum_normalized_difference}", samples.len());
 }
+
+#[test]
+fn interleaved_features_match_serial_full_scores_at_boundaries() {
+    let fast = Identifier::new().unwrap();
+    let model = crate::Model::from_bytes(crate::model::EMBEDDED_MODEL).unwrap();
+    assert!(model.history_bytes.is_none());
+    let serial = Identifier::from_model(std::sync::Arc::new(model), Options::default()).unwrap();
+    let corpus: Value =
+        serde_json::from_str(include_str!("../testdata/py3langid_cases.json")).unwrap();
+    let mut texts: Vec<_> = corpus["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(case_bytes)
+        .collect();
+    for length in [
+        0, 1, 5, 6, 7, 63, 64, 65, 127, 128, 129, 255, 256, 257, 511, 512, 513, 1023, 1024, 1025,
+        2047, 2048, 2049, 4095, 4096, 4097,
+    ] {
+        texts.push(
+            b"English text with repeated features and caf\xc3\xa9. "
+                .iter()
+                .copied()
+                .cycle()
+                .take(length)
+                .collect(),
+        );
+        texts.push((0..=255_u8).cycle().take(length).collect());
+    }
+    for languages in [&[][..], &["en", "sr", "uz"][..]] {
+        fast.set_languages(languages).unwrap();
+        serial.set_languages(languages).unwrap();
+        for text in &texts {
+            for (actual, expected) in [
+                (fast.rank(text), serial.rank(text)),
+                (fast.rank_normalized(text), serial.rank_normalized(text)),
+            ] {
+                assert_eq!(actual.len(), expected.len());
+                for (actual, expected) in actual.iter().zip(&expected) {
+                    assert_eq!(
+                        actual.language,
+                        expected.language,
+                        "input length {}",
+                        text.len()
+                    );
+                    assert_eq!(
+                        actual.score.to_bits(),
+                        expected.score.to_bits(),
+                        "input length {}",
+                        text.len()
+                    );
+                }
+            }
+        }
+    }
+}

@@ -79,6 +79,10 @@ copy the data or use Python, worker processes, or TCP for classification.
 Both verify the corpus hash/count, retain all 140 candidate labels, use calibrated
 probabilities without abstention, and count every exact-label prediction.
 
+All tables below were rerun after the retained
+[within-thread optimizations](#within-thread-optimizations). They supersede the
+earlier pre-optimization and experimental timing tables.
+
 ### Results: 2026-09-12
 
 All 1,000 original sentences were tested: 20 languages, 500 short and 500 medium
@@ -86,8 +90,8 @@ sentences. Both engines scored **992/1,000 (99.2%)**.
 
 | Engine | Model startup (ms) | Pass time (ms) | Accuracy |
 | --- | ---: | ---: | ---: |
-| rust-py3langid | 292.47 | 41.88 | 99.2% |
-| go-py3langid v0.4.0 | 328.21 | 42.56 | 99.2% |
+| rust-py3langid, portable release | 292.21 | 17.22 | 99.2% |
+| go-py3langid v0.4.0 | 330.12 | 46.92 | 99.2% |
 
 Measured on WSL2 Linux/x86_64, AMD Ryzen AI 7 PRO 350, pinned to logical CPU 2.
 Rust 1.98.1 used the default release profile; Go 1.27.1 used `CGO_ENABLED=0`,
@@ -96,8 +100,11 @@ the Go runner sets `GOMAXPROCS=1` and collects corpus-loading garbage before tim
 
 Each runner discards one complete warm-up pass and reports the median of eight
 subsequent passes in the same corpus order, checking that predictions stay stable.
-The table takes medians across eight fresh launches per engine, alternating
-Rust-Go and Go-Rust order; an initial launch of each was discarded first.
+The table takes medians across twelve fresh launches per configuration, using
+rotating forward and reverse orders across portable Rust, Go, and the optional
+native Rust build below. Each configuration occupied each execution position
+four times; an initial launch of each was discarded first. No optional competitor
+features were enabled in these Rust builds.
 
 `startup_ms` times model/identifier construction only, with a warm filesystem
 cache, not OS process launch or compilation. `pass_ms` includes direct library
@@ -105,10 +112,10 @@ classification and storing returned labels; corpus loading, warm-up, accuracy
 checks, and JSON output are excluded. These times are not comparable to the
 original Python/TCP benchmark's end-to-end pass times.
 
-Steady-state performance is essentially tied in this run: per-launch median pass
-times ranged from 40.57-45.70 ms for Rust and 40.77-56.52 ms for Go, much wider than
-the 0.68 ms difference between their medians. This selected 20-language corpus
-does not establish universal accuracy or a general speedup.
+Portable Rust used **63.3% less pass time (2.72x throughput)** than Go in this run.
+Per-launch median pass times ranged from 16.38-21.53 ms for Rust and 43.37-62.81 ms
+for Go. All measured runs were retained. This selected 20-language corpus does
+not establish universal accuracy or a general speedup.
 
 ### Build and Run
 
@@ -125,7 +132,8 @@ taskset -c 2 target/benchmark-go --suite "$SUITE" --passes 8
 Adjust the checkout path and choose an available CPU in place of `2`. Each
 executable prints just `startup_ms`, `pass_ms`, and `accuracy_pct` as one JSON
 object. `--passes` defaults to eight and must be positive. The neighboring
-manifest is required; unsupported languages are an error, never silently filtered.
+manifest is required; by default, unsupported languages are an error, never
+silently filtered. The optional comparison below adds explicit subset selection.
 Run the metric tests with `cargo test --locked --example benchmark` and
 `go -C tools/go-reference test -mod=readonly ./benchmark`.
 
@@ -133,6 +141,181 @@ Corpus SHA-256:
 `ec0ea263e5cdea41005cb2bc9fff1612e2b5a937c319a7c25162d2ad8b00e7a5`.
 The original corpus and its CC-BY-SA 4.0 attribution remain in go-py3langid's
 benchmark suite; no benchmark sentences are redistributed here.
+
+### Rust Library Comparison: 2026-09-12
+
+A separate current-build run compares this port with
+[Whatlang](https://github.com/greyblake/whatlang-rs),
+[Lingua](https://github.com/pemistahl/lingua-rs), and
+[Whichlang](https://github.com/quickwit-oss/whichlang). All classification runs
+directly in Rust using the same runner and the original corpus in place.
+
+This table uses the optional comparison-feature build. It is a separate execution
+batch from the Rust/Go table; compare engines within a table, not timings between
+tables. Both use the same retained inference code and portable release profile.
+
+| Engine | Samples | Model startup (ms) | Pass time (ms) | Accuracy |
+| --- | ---: | ---: | ---: | ---: |
+| rust-py3langid 0.1.0 | 1,000 | 276.79 | 15.15 | 99.20% (992/1,000) |
+| Whatlang 0.18.0 | 1,000 | <0.01[^startup] | 36.45 | 99.30% (993/1,000) |
+| Lingua 1.8.0, high accuracy | 1,000 | 69.21 | 1,349.42 | 98.70% (987/1,000) |
+| Whichlang 0.1.1[^whichlang-subset] | 800 | 0[^startup] | 1.05 | 99.875% (799/800) |
+| rust-py3langid, matching subset[^whichlang-subset] | 800 | 286.87 | 12.06 | 99.25% (794/800) |
+
+[^whichlang-subset]: Whichlang supports only 16 languages, so it was run only on
+        the 800 supported samples. The 200 Indonesian, Polish, Thai, and Ukrainian
+        samples were excluded from both subset rows, not counted as errors. The
+        matching rust-py3langid row uses those exact same 800 inputs. Its detector
+        still considers all 140 labels; selecting samples does not restrict candidate
+        languages. The subset scores and batch times are not directly comparable to
+        the 1,000-sample rows.
+
+[^startup]: Whatlang's lightweight constructor measured below 0.01 ms. Whichlang
+        has no runtime model-construction step and reports zero. These measurements
+        exclude OS process startup and cold executable-page loading, not just disk
+        reads of the corpus; they are not end-to-end startup latency.
+
+All supported candidate languages remain enabled: 140 labels for rust-py3langid,
+70 for Whatlang, 75 for Lingua, and 16 for Whichlang. Rust uses calibrated
+probabilities without abstention. Whatlang uses `Detector::new()` without
+reliability filtering. Lingua uses `from_all_languages()` with
+`with_preloaded_language_models()`, default high-accuracy mode, and the default
+minimum relative distance. Model preloading is included in its startup time.
+Unknown results count as incorrect; no confidence-based sample filtering is used.
+Native language labels are compared outside timing, with FLORES Arabic/Mandarin
+codes `arb`/`zho` mapped to `ara`/`cmn` for Whatlang and Whichlang.
+
+The host, Rust version, release profile, and timing boundaries match the first
+comparison. Each of the five configurations ran in ten fresh processes, using
+five rotating forward orders followed by five rotating reverse orders, so every
+configuration occupied each execution position twice. The initial smoke launch
+of each configuration was discarded. Each measured launch discarded one warm-up
+pass, then reported the median of eight timed passes; the table takes the median
+of those ten reports. CPU affinity was `2`, with `RAYON_NUM_THREADS=1`.
+
+Accuracy was constant across all launches. Launch-median pass ranges were
+14.05-18.22 ms for rust-py3langid, 35.41-42.59 ms for Whatlang,
+1,302.93-1,618.78 ms for Lingua, 1.01-1.17 ms for Whichlang, and 11.64-15.15 ms
+for the matching Rust subset. All runs were retained. These are corpus-specific
+results with different candidate sets, not a universal accuracy or speed ranking.
+
+#### Why the Go Lingua Ratio Differs
+
+The [Go repository's comparison](https://github.com/markusmobius/go-py3langid#language-detector-comparison)
+reports 2,358.7 ms for Lingua and 498.2 ms for go-py3langid, about 4.7x. Those are
+end-to-end pass times including Python, JSON, and one TCP round trip per text.
+Here, those costs are excluded. Shared per-request overhead can compress the
+ratio between fast and slow classifiers; the 4.7x ratio is not a direct-library
+performance ratio.
+
+The configurations were checked: both use all 75 languages, default high
+accuracy, and zero minimum relative distance. The Go worker uses lingua-go 1.4.0;
+this table uses lingua-rs 1.8.0, not the same implementation. Direct Go spot checks
+of both `DetectLanguageOf` and the worker's `ComputeLanguageConfidenceValues`
+path, without TCP, took roughly 1.1-1.9 seconds per 1,000 texts and reproduced
+987/1,000 correct. These diagnostic observations support the second-scale
+inference cost, but are not a separate controlled Go/Rust ranking.
+
+Startup boundaries also differ: the Go worker's launch-to-ready measurement
+precedes lazy loading during warm-up. This Rust runner explicitly preloads models
+inside the model-construction timer. Both exclude warm-up from measured passes.
+
+#### Run the Comparison
+
+The competitor crates and all 75 Lingua language models are opt-in dependencies;
+the default library build does not include them. From the repository root:
+
+```sh
+SUITE=../../go-py3langid/benchmarks/language-detection/suite/flores200.jsonl
+cargo build --locked --release --example benchmark --features benchmark-comparison
+for engine in rust-py3langid whatlang lingua whichlang; do
+    RAYON_NUM_THREADS=1 taskset -c 2 target/release/examples/benchmark \
+        --suite "$SUITE" --engine "$engine" --passes 8
+done
+RAYON_NUM_THREADS=1 taskset -c 2 target/release/examples/benchmark \
+    --suite "$SUITE" --engine rust-py3langid --subset whichlang --passes 8
+```
+
+Each launch still emits only `startup_ms`, `pass_ms`, and `accuracy_pct` as JSON.
+`--engine` defaults to `rust-py3langid`; `--engine whichlang` automatically selects
+its supported samples. `--subset whichlang` applies that same sample selection
+to any engine without changing its candidate languages. The original manifest
+hash/count are validated before any selection, and an empty subset is an error.
+
+The optional adapter tests require no corpus. To also verify the exact 1,000/800
+sample counts against the existing checkout, run:
+
+```sh
+BENCHMARK_SUITE="$SUITE" cargo test --locked --example benchmark \
+    --features benchmark-comparison -- --include-ignored
+```
+
+### Optional CPU-Specific Build
+
+An opt-in `-C target-cpu=native` build was measured alongside portable Rust and
+Go in the same twelve-launch run above, using the current optimized source:
+
+| Build | Model startup (ms) | Pass time (ms) | Accuracy |
+| --- | ---: | ---: | ---: |
+| Portable release | 292.21 | 17.22 | 99.2% |
+| Native CPU release | 279.37 | 16.81 | 99.2% |
+
+The native median was only 2.4% lower in this rerun, with heavily overlapping
+pass ranges: 16.38-21.53 ms and 14.84-23.98 ms respectively. That is not a robust
+additional speedup claim. All 68 Go reference cases still matched exactly.
+Native targeting changes code generation throughout the binary and its
+dependencies, not only SIMD width; it does not establish a startup improvement.
+
+For a Linux/WSL build that will run on the build machine's CPU:
+
+```sh
+RUSTFLAGS="-C target-cpu=native" cargo build --locked --release \
+    --example benchmark --target-dir target/native
+```
+
+Run `target/native/release/examples/benchmark` with the same arguments as above.
+This remains opt-in: the binary can require instructions missing on other CPUs
+and is not a portable distribution build. No manual SIMD, approximate math, or
+default compiler flag changes were added.
+
+### Within-Thread Optimizations
+
+The default build now interleaves byte ranges within a single classification
+call. An exhaustive DFA-equivalence test proves that the embedded model's state
+after six bytes is independent of the initial state. Later ranges are primed
+with that lookbehind, then their emitted features are replayed in original byte
+order. This exposes independent memory reads without changing feature counts or
+their first-encounter order. Inputs of at least 128 encoded bytes use eight
+streams; shorter inputs use four where worthwhile, with serial tails.
+
+With all languages enabled, the scoring loop reads contiguous weight rows and
+handles four features together, preserving the exact float32 multiplication and
+addition order for each language. Restricted-language scoring retains the
+original indexed path. There is no approximate math, unsafe code, model change,
+batch API, or internal threading. Calls remain thread-safe; application-level
+parallelism belongs to the caller. All current tables above include these
+optimizations. Model initialization was not optimized.
+
+All 68 pinned-Go reference cases retained exact encoded bytes, labels, ranking
+order, and raw/normalized scores. The exhaustive history proof, boundary parity
+tests, and full-corpus serial traversal comparison pass on Linux/WSL and
+Windows/GNU with Rust 1.98.1. Other platforms have not been executed locally.
+
+The byte-interleaving fast path applies only to the pinned embedded model whose
+history bound is proved. Custom models loaded from bytes or files retain serial
+DFA traversal. Four-row scoring still applies when all their columns are active.
+The widest byte path uses a fixed 8 KiB feature buffer, not a second model copy.
+Default builds need no architecture-specific instructions; `target-cpu=native`
+remains a separate opt-in build and is not a portable distribution setting.
+
+To check every raw/normalized score against serial traversal on the existing
+corpus without copying it:
+
+```sh
+SUITE=../../go-py3langid/benchmarks/language-detection/suite/flores200.jsonl
+BENCHMARK_SUITE="$SUITE" cargo test --locked --release --example benchmark \
+    original_suite_inference_parity -- --ignored
+```
 
 ## Compatibility
 

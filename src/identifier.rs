@@ -232,21 +232,63 @@ impl Identifier {
         result
     }
 
-    fn score(&self, runtime: &Runtime, buffer: &mut WorkBuffer, text: &[u8], normalized: bool) {
-        let text = preprocess::encode(text);
+    fn extract_features<const LANES: usize>(&self, buffer: &mut WorkBuffer, text: &[u8]) {
         let mut state = 0;
-        for &letter in text.as_ref() {
+        let mut remaining = text;
+        if let Some(history) = self.model.history_bytes {
+            let mut emitted = [[0_i32; 256]; LANES];
+            while remaining.len() >= LANES * 16 {
+                let width = remaining.len().min(LANES * 256) / LANES;
+                if width < history {
+                    break;
+                }
+                let mut states = [0; LANES];
+                states[0] = state;
+                for (lane, state) in states.iter_mut().enumerate().skip(1) {
+                    let start = lane * width;
+                    for &letter in &remaining[start - history..start] {
+                        *state = self.model.transitions
+                            [self.model.rows[*state] as usize * 256 + usize::from(letter)]
+                            as usize;
+                    }
+                }
+                for offset in 0..width {
+                    for (lane, state) in states.iter_mut().enumerate() {
+                        let letter = remaining[lane * width + offset];
+                        *state = self.model.transitions
+                            [self.model.rows[*state] as usize * 256 + usize::from(letter)]
+                            as usize;
+                        emitted[lane][offset] = self.model.outputs[*state];
+                    }
+                }
+                for lane in &emitted {
+                    for &feature in &lane[..width] {
+                        if feature >= 0 {
+                            buffer.record_feature(feature as usize);
+                        }
+                    }
+                }
+                state = states[LANES - 1];
+                remaining = &remaining[width * LANES..];
+            }
+        }
+        for &letter in remaining {
             state = self.model.transitions
                 [self.model.rows[state] as usize * 256 + usize::from(letter)]
                 as usize;
             let feature = self.model.outputs[state];
             if feature >= 0 {
-                let feature = feature as usize;
-                if buffer.feature_counts[feature] == 0 {
-                    buffer.active_features.push(feature);
-                }
-                buffer.feature_counts[feature] = buffer.feature_counts[feature].wrapping_add(1);
+                buffer.record_feature(feature as usize);
             }
+        }
+    }
+
+    fn score(&self, runtime: &Runtime, buffer: &mut WorkBuffer, text: &[u8], normalized: bool) {
+        let text = preprocess::encode(text);
+        if text.len() >= 128 {
+            self.extract_features::<8>(buffer, text.as_ref());
+        } else {
+            self.extract_features::<4>(buffer, text.as_ref());
         }
         buffer.scores.fill(0.0);
         if buffer.active_features.is_empty() {
@@ -254,12 +296,49 @@ impl Identifier {
                 buffer.scores.fill(-f32::MAX);
             }
         } else {
-            for &feature in &buffer.active_features {
+            let mut remaining_features = buffer.active_features.as_slice();
+            if runtime.columns.len() == self.model.num_languages {
+                let (groups, tail) = buffer.active_features.as_chunks::<4>();
+                remaining_features = tail;
+                for features in groups {
+                    let counts: [f32; 4] = std::array::from_fn(|index| {
+                        let feature = features[index];
+                        let count = f64::from(buffer.feature_counts[feature]).ln_1p() as f32;
+                        buffer.feature_counts[feature] = 0;
+                        count
+                    });
+                    let weights: [&[f32]; 4] = std::array::from_fn(|index| {
+                        let base = features[index] * self.model.num_languages;
+                        &self.model.weights[base..base + self.model.num_languages]
+                    });
+                    for ((((score, &first), &second), &third), &fourth) in buffer
+                        .scores
+                        .iter_mut()
+                        .zip(weights[0])
+                        .zip(weights[1])
+                        .zip(weights[2])
+                        .zip(weights[3])
+                    {
+                        *score += counts[0] * first;
+                        *score += counts[1] * second;
+                        *score += counts[2] * third;
+                        *score += counts[3] * fourth;
+                    }
+                }
+            }
+            for &feature in remaining_features {
                 let count = f64::from(buffer.feature_counts[feature]).ln_1p() as f32;
                 buffer.feature_counts[feature] = 0;
                 let base = feature * self.model.num_languages;
-                for (score, &column) in buffer.scores.iter_mut().zip(&runtime.columns) {
-                    *score += count * self.model.weights[base + column];
+                if runtime.columns.len() == self.model.num_languages {
+                    let weights = &self.model.weights[base..base + self.model.num_languages];
+                    for (score, &weight) in buffer.scores.iter_mut().zip(weights) {
+                        *score += count * weight;
+                    }
+                } else {
+                    for (score, &column) in buffer.scores.iter_mut().zip(&runtime.columns) {
+                        *score += count * self.model.weights[base + column];
+                    }
                 }
             }
             for (score, &column) in buffer.scores.iter_mut().zip(&runtime.columns) {
@@ -316,6 +395,15 @@ impl Runtime {
             pool: Mutex::new(Vec::new()),
             max_cached_buffers: std::thread::available_parallelism().map_or(1, |count| count.get()),
         }
+    }
+}
+
+impl WorkBuffer {
+    fn record_feature(&mut self, feature: usize) {
+        if self.feature_counts[feature] == 0 {
+            self.active_features.push(feature);
+        }
+        self.feature_counts[feature] = self.feature_counts[feature].wrapping_add(1);
     }
 }
 

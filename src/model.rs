@@ -16,6 +16,7 @@ pub struct Model {
     pub(crate) num_features: usize,
     pub(crate) num_languages: usize,
     pub(crate) num_states: usize,
+    pub(crate) history_bytes: Option<usize>,
     pub(crate) transitions: Vec<u32>,
     pub(crate) rows: Vec<u32>,
     pub(crate) outputs: Vec<i32>,
@@ -26,7 +27,9 @@ pub struct Model {
 
 impl Model {
     pub fn embedded() -> Result<Self, Error> {
-        Self::from_bytes(EMBEDDED_MODEL)
+        let mut model = Self::from_bytes(EMBEDDED_MODEL)?;
+        model.history_bytes = Some(6);
+        Ok(model)
     }
 
     pub fn from_path(path: impl AsRef<Path>) -> Result<Self, Error> {
@@ -129,6 +132,7 @@ impl Model {
             num_features,
             num_languages,
             num_states,
+            history_bytes: None,
             transitions,
             rows,
             outputs,
@@ -170,6 +174,7 @@ mod tests {
             num_features: 1,
             num_languages: 3,
             num_states: 65_537,
+            history_bytes: None,
             transitions: vec![0; 256],
             rows: vec![0; 65_537],
             outputs: vec![-1; 65_537],
@@ -291,6 +296,32 @@ mod tests {
         }
         assert!(Model::from_bytes(b"LIDG1\0").is_err());
         assert!(Model::from_bytes(&encode(&synthetic_model(), &[1])).is_err());
+    }
+
+    #[test]
+    fn embedded_dfa_history_bound_is_valid() {
+        let model = Model::embedded().unwrap();
+        let mut classes: Vec<_> = (0..model.num_states as u32).collect();
+        for _ in 0..model.history_bytes.unwrap() {
+            let mut groups = std::collections::HashMap::new();
+            let row_classes: Vec<_> = model
+                .transitions
+                .as_chunks::<256>()
+                .0
+                .iter()
+                .map(|row| {
+                    let key: Vec<_> = row.iter().map(|&state| classes[state as usize]).collect();
+                    let next = groups.len() as u32;
+                    *groups.entry(key).or_insert(next)
+                })
+                .collect();
+            classes = model
+                .rows
+                .iter()
+                .map(|&row| row_classes[row as usize])
+                .collect();
+        }
+        assert!(classes.iter().all(|&class| class == classes[0]));
     }
 
     #[test]
