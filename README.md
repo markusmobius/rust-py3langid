@@ -4,22 +4,32 @@ A pure-Rust port of the [py3langid](https://github.com/adbar/py3langid) inferenc
 runtime, with its current model embedded in the library. No runtime Go, Python,
 NumPy, native C library, or model download is needed.
 
-The initial Rust release, **v0.4.0**, tracks
+**v0.4.1** tracks
 [go-py3langid v0.4.0](https://github.com/markusmobius/go-py3langid/tree/v0.4.0)
 and Python py3langid 0.4.0. The model recognizes 139 languages plus `zxx`
 (non-linguistic content). Its 142 internal score columns produce 140 unique
 labels; Serbian and Uzbek each have two script-specific columns that are merged
 during inference.
 `und` is returned only by explicitly configured confidence-based abstention.
+v0.4.1 changes dependency requirements only: the ICU crates accept every release
+verified to carry the same Unicode 17 data (2.1.x through 2.3.x) instead of one
+exact version, and the optional benchmark crates use compatible (`^`)
+requirements. See [Unicode data versions](#unicode-data-versions).
 
 ## Use
 
-This is a GitHub source release, not a crates.io publication.
-Requires Rust 1.98.1. Pin the release tag as a Cargo dependency:
+Requires Rust 1.98.1. Add the crates.io release:
 
 ```toml
 [dependencies]
-rust-py3langid = { git = "https://github.com/markusmobius/rust-py3langid", tag = "v0.4.0" }
+rust-py3langid = "0.4.1"
+```
+
+or pin the GitHub release tag:
+
+```toml
+[dependencies]
+rust-py3langid = { git = "https://github.com/markusmobius/rust-py3langid", tag = "v0.4.1" }
 ```
 
 ```rust
@@ -348,10 +358,31 @@ uses the encoded byte length's inverse square root before softmax. Featureless
 raw input returns `-f32::MAX`, not a prior-based guess. A merged probability can
 be slightly above one because of float32 rounding; it is deliberately not clamped.
 
-Preprocessing uses Unicode 17 data, full root-locale lowercase when every cased
-character is uppercase, and stream-safe NFC matching Go. ICU case/property data
-are pinned to the ICU 78.1 / CLDR 48 generation; unicode-normalization is pinned
-to 0.1.25. Do not upgrade these tables as incidental dependency maintenance.
+Preprocessing uses full root-locale lowercase when every cased character is
+uppercase, and stream-safe NFC, matching Go.
+
+### Unicode Data Versions
+
+Go 1.27.1 and go-py3langid v0.4.0 use Unicode 17. Preprocessing must use the
+same Unicode tables, so the requirements admit only releases verified to carry
+identical data. An exhaustive comparison of every Unicode scalar value over the
+data used here (the Lowercase and Uppercase properties, titlecase category,
+root lowercase mapping, canonical combining class, NFD and NFC) found:
+
+- `icu_casemap`/`icu_properties` 2.1.x, 2.2.0 and 2.3.0 are identical
+  (Unicode 17), so the requirement is `>=2.1.1, <2.4` (`>=2.1.2` for
+  `icu_properties`).
+- `icu_casemap`/`icu_properties` 2.4.0 use Unicode 18 and differ on 165 code
+  points.
+- `unicode-normalization` 0.1.25 is its only Unicode 17 release; 0.1.26 uses
+  Unicode 18, so the requirement stays `=0.1.25`.
+
+A project that requires ICU 2.4+ or `unicode-normalization` 0.1.26+ elsewhere
+cannot currently resolve together with this crate. Moving to Unicode 18 changes
+reference behavior and must follow the Go reference, not incidental dependency
+maintenance. The repository's [Cargo.lock](Cargo.lock) keeps the tested
+`icu_casemap` 2.1.1, `icu_properties` 2.1.2 and `unicode-normalization` 0.1.25,
+and the reference tests assert Unicode 17.
 
 Implementation choices that do not change tested inference: the default model
 is shared through `Arc`; restrictions select original matrix columns instead of
@@ -457,6 +488,6 @@ The converted `.lidg` format is intentionally reused without retraining.
 BSD-3-Clause terms and the original Marco Lui, Adrien Barbaresi and Ilya Pyshkin
 notices are preserved in [LICENSE](LICENSE). Binary distributions must retain
 these and the notices required by Cargo dependencies, including Unicode data.
-The [v0.4.0 release](https://github.com/markusmobius/rust-py3langid/releases/tag/v0.4.0)
-contains source only; prebuilt binaries and crates.io publication are not included.
-Peak and retained memory have not yet been benchmarked.
+Releases are published on [crates.io](https://crates.io/crates/rust-py3langid)
+and as [GitHub source releases](https://github.com/markusmobius/rust-py3langid/releases);
+prebuilt binaries are not included. Peak and retained memory have not yet been benchmarked.
